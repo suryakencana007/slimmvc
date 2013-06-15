@@ -189,7 +189,7 @@ class Slim
         $this->add(new \Slim\Middleware\Flash());
         $this->add(new \Slim\Middleware\MethodOverride());
         //DB
-        $this->db = \Capsule\Database\Connection::make('default',require ZICONFIG.'/database.php',true);
+        //$this->db = \Capsule\Database\Connection::make('default',require ZICONFIG.'/database.php',true);
 
          //facade
         \Facade::setFacadeApplication($this);
