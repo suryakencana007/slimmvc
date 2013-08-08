@@ -1,15 +1,15 @@
 {
     "name": "slim/mvc",
     "type": "library",
-    "description": "Slim Framework, a PHP micro framework",
+    "description": "Slim Framework, a PHP micro framework , Model View Controller extends",
     "keywords": ["microframework","rest","router"],
-    "homepage": "http://github.com/codeguy/Slim",
+    "homepage": "https://github.com/suryakencana/slimmvc",
     "license": "MIT",
     "authors": [
         {
-            "name": "Josh Lockhart",
-            "email": "info@joshlockhart.com",
-            "homepage": "http://www.joshlockhart.com/"
+            "name": "Nanang Suryadi",
+            "email": "surya@kreasibaju.com ",
+            "homepage": "http://www.kreasibaju.com/"
         }
     ],
     "require": {
