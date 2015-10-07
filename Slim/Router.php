@@ -6,7 +6,7 @@
  * @copyright   2011 Josh Lockhart
  * @link        http://www.slimframework.com
  * @license     http://www.slimframework.com/license
- * @version     2.2.0
+ * @version     2.4.2
  * @package     Slim
  *
  * MIT LICENSE
@@ -64,11 +64,17 @@ class Router
     protected $matchedRoutes;
 
     /**
+     * @var array Array containing all route groups
+     */
+    protected $routeGroups;
+
+    /**
      * Constructor
      */
     public function __construct()
     {
         $this->routes = array();
+        $this->routeGroups = array();
     }
 
     /**
@@ -77,7 +83,6 @@ class Router
      */
     public function getCurrentRoute()
     {
-        echo "getCurrentRoute";
         if ($this->currentRoute !== null) {
             return $this->currentRoute;
         }
@@ -101,7 +106,7 @@ class Router
         if ($reload || is_null($this->matchedRoutes)) {
             $this->matchedRoutes = array();
             foreach ($this->routes as $route) {
-                if (!$route->supportsHttpMethod($httpMethod)) {
+                if (!$route->supportsHttpMethod($httpMethod) && !$route->supportsHttpMethod("ANY")) {
                     continue;
                 }
 
@@ -115,25 +120,66 @@ class Router
     }
 
     /**
-     * Map a route object to a callback function
-     * @param  string     $pattern      The URL pattern (ie. "/books/:id")
-     * @param  mixed      $callable     Anything that returns TRUE for is_callable()
-     * @return \Slim\Route
+     * Add a route object to the router
+     * @param  \Slim\Route     $route      The Slim Route
      */
-    public function map($pattern, $callable)
+    public function map(\Slim\Route $route)
     {
-        $route = new \Slim\Route($pattern, $callable);
+        list($groupPattern, $groupMiddleware) = $this->processGroups();
+
+        $route->setPattern($groupPattern . $route->getPattern());
         $this->routes[] = $route;
 
-        return $route;
+
+        foreach ($groupMiddleware as $middleware) {
+            $route->setMiddleware($middleware);
+        }
+    }
+
+    /**
+     * A helper function for processing the group's pattern and middleware
+     * @return array Returns an array with the elements: pattern, middlewareArr
+     */
+    protected function processGroups()
+    {
+        $pattern = "";
+        $middleware = array();
+        foreach ($this->routeGroups as $group) {
+            $k = key($group);
+            $pattern .= $k;
+            if (is_array($group[$k])) {
+                $middleware = array_merge($middleware, $group[$k]);
+            }
+        }
+        return array($pattern, $middleware);
+    }
+
+    /**
+     * Add a route group to the array
+     * @param  string     $group      The group pattern (ie. "/books/:id")
+     * @param  array|null $middleware Optional parameter array of middleware
+     * @return int        The index of the new group
+     */
+    public function pushGroup($group, $middleware = array())
+    {
+        return array_push($this->routeGroups, array($group => $middleware));
+    }
+
+    /**
+     * Removes the last route group from the array
+     * @return bool    True if successful, else False
+     */
+    public function popGroup()
+    {
+        return (array_pop($this->routeGroups) !== null);
     }
 
     /**
      * Get URL for named route
      * @param  string               $name   The name of the route
-     * @param  array                Associative array of URL parameter names and replacement values
-     * @throws RuntimeException     If named route not found
-     * @return string               The URL for the given route populated with provided replacement values
+     * @param  array                $params Associative array of URL parameter names and replacement values
+     * @throws \RuntimeException            If named route not found
+     * @return string                       The URL for the given route populated with provided replacement values
      */
     public function urlFor($name, $params = array())
     {
@@ -141,45 +187,20 @@ class Router
             throw new \RuntimeException('Named route not found for name: ' . $name);
         }
         $search = array();
-        foreach (array_keys($params) as $key) {
-            $search[] = '#:' . $key . '\+?(?!\w)#';
+        foreach ($params as $key => $value) {
+            $search[] = '#:' . preg_quote($key, '#') . '\+?(?!\w)#';
         }
         $pattern = preg_replace($search, $params, $this->getNamedRoute($name)->getPattern());
 
-        //Remove remnants of unpopulated, trailing optional pattern segments
-        return preg_replace('#\(/?:.+\)|\(|\)#', '', $pattern);
-    }
-
-    /**
-     * Dispatch route
-     *
-     * This method invokes the route object's callable. If middleware is
-     * registered for the route, each callable middleware is invoked in
-     * the order specified.
-     *
-     * @param  \Slim\Route                  $route  The route object
-     * @return bool                         Was route callable invoked successfully?
-     */
-    public function dispatch(\Slim\Route $route)
-    {
-        $this->currentRoute = $route; 
-
-        //Invoke middleware
-        foreach ($route->getMiddleware() as $mw) {
-            call_user_func_array($mw, array($route));
-        }
-
-        //Invoke callable
-        call_user_func_array($route->getCallable(), array_values($route->getParams()));
-
-        return true;
+        //Remove remnants of unpopulated, trailing optional pattern segments, escaped special characters
+        return preg_replace('#\(/?:.+\)|\(|\)|\\\\#', '', $pattern);
     }
 
     /**
      * Add named route
      * @param  string            $name   The route name
      * @param  \Slim\Route       $route  The route object
-     * @throws \RuntimeException If a named route already exists with the same name
+     * @throws \RuntimeException         If a named route already exists with the same name
      */
     public function addNamedRoute($name, \Slim\Route $route)
     {
@@ -211,9 +232,9 @@ class Router
         $this->getNamedRoutes();
         if ($this->hasNamedRoute($name)) {
             return $this->namedRoutes[(string) $name];
-        } else {
-            return null;
         }
+
+        return null;
     }
 
     /**
@@ -232,160 +253,5 @@ class Router
         }
 
         return new \ArrayIterator($this->namedRoutes);
-    }
-
-     /********************************************************************************
-    * Routing
-    *******************************************************************************/
-
-    /**
-     * Add GET|POST|PUT|DELETE route
-     *
-     * Adds a new route to the router with associated callable. This
-     * route will only be invoked when the HTTP request's method matches
-     * this route's method.
-     *
-     * ARGUMENTS:
-     *
-     * First:       string  The URL pattern (REQUIRED)
-     * In-Between:  mixed   Anything that returns TRUE for `is_callable` (OPTIONAL)
-     * Last:        mixed   Anything that returns TRUE for `is_callable` (REQUIRED)
-     *
-     * The first argument is required and must always be the
-     * route pattern (ie. '/books/:id').
-     *
-     * The last argument is required and must always be the callable object
-     * to be invoked when the route matches an HTTP request.
-     *
-     * You may also provide an unlimited number of in-between arguments;
-     * each interior argument must be callable and will be invoked in the
-     * order specified before the route's callable is invoked.
-     *
-     * USAGE:
-     *
-     * Slim::get('/foo'[, middleware, middleware, ...], callable);
-     *
-     * @param   array (See notes above)
-     * @return  \Slim\Route
-     */
-    protected function mapRoute($args)
-    {
-        $pattern = array_shift($args);
-        $callable = array_pop($args);
-        $route = $this->map($pattern, $callable);
-        if (count($args) > 0) {
-            $route->setMiddleware($args);
-        }
-
-        return $route;
-    }
-
-    /**
-     * Add generic route without associated HTTP method
-     * @see    mapRoute()
-     * @return \Slim\Route
-     */
-    public function maps()
-    {
-        $args = func_get_args();
-
-        return $this->mapRoute($args);
-    }
-
-    /**
-     * Add GET route
-     * @see    mapRoute()
-     * @return \Slim\Route
-     */
-    public function get()
-    {
-        $args = func_get_args();
-
-        return $this->mapRoute($args)->via(\Slim\Http\Request::METHOD_GET, \Slim\Http\Request::METHOD_HEAD);
-    }
-
-    /**
-     * Add POST route
-     * @see    mapRoute()
-     * @return \Slim\Route
-     */
-    public function post()
-    {
-        $args = func_get_args();
-
-        return $this->mapRoute($args)->via(\Slim\Http\Request::METHOD_POST);
-    }
-
-    /**
-     * Add PUT route
-     * @see    mapRoute()
-     * @return \Slim\Route
-     */
-    public function put()
-    {
-        $args = func_get_args();
-
-        return $this->mapRoute($args)->via(\Slim\Http\Request::METHOD_PUT);
-    }
-
-    /**
-     * Add DELETE route
-     * @see    mapRoute()
-     * @return \Slim\Route
-     */
-    public function delete()
-    {
-        $args = func_get_args();
-
-        return $this->mapRoute($args)->via(\Slim\Http\Request::METHOD_DELETE);
-    }
-
-    /**
-     * Add OPTIONS route
-     * @see    mapRoute()
-     * @return \Slim\Route
-     */
-    public function options()
-    {
-        $args = func_get_args();
-
-        return $this->mapRoute($args)->via(\Slim\Http\Request::METHOD_OPTIONS);
-    }
-
-    /**
-    *Add CONTROLLERS route
-    * ('/user','User@index')->name('user.index')
-    * @see  mapRoute()
-    * @return \Slim\Route
-    */
-    public function controller()
-    {
-        $args = func_get_args();
-        $arrArgs = $this->makeController($args);
-        return $this->mapRoute($arrArgs['args'])->via(\Slim\Http\Request::METHOD_GET, \Slim\Http\Request::METHOD_HEAD)->name($arrArgs['name']);
-    }
-
-    private function makeController($args) 
-    {
-        //validasi args kesalahan input fucking user
-        $uriGen = array();
-
-        $uriGen['path'] = array_shift($args);
-        $uriGen['controller'] = array_pop($args);
-
-        if(is_callable($uriGen['controller'])){
-            throw new \Exception("this callable arguments, please input controller RouteName as like => home@index");
-        }
-        //array callable
-        $uriGen['crtlact'] = explode('@', $uriGen['controller']);
-        $uriGen['name'] = $uriGen['crtlact'][0].".".$uriGen['crtlact'][1];
-        //generate controller class
-        $uriGen['class'] = ucfirst($uriGen['crtlact'][0]).'_Controller';
-        $instanceCon = new $uriGen['class'];
-        //------
-
-        //var_dump($instanceCon);
-        $uriGen['args'] = array($uriGen['path'],array($instanceCon,$uriGen['crtlact'][1]));
-        return $uriGen;
     }
 }
